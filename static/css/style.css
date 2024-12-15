@@ -1,0 +1,104 @@
+:root {
+    --primary-bg-color: #121212;
+    --button-bg-color: rgba(255, 255, 255, 0.1);
+    --font-color: #ffffff;
+    --header-color: #ff4500;
+    --input-bg-color: #1e1e1e;
+    --input-border-color: #333333;
+    --input-focus-color: #ff4500;
+    --font-family: 'Lexend', sans-serif;
+    --button-padding: 15px 20px;
+    --button-font-size: 15px;
+    --button-font-weight: 500;
+    --input-padding: 10px;
+    --input-font-size: 16px;
+    --input-border-radius: 5px;
+    --label-font-size: 14px;
+}
+
+body {
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    align-items: center;
+    gap: 20px;
+    background-color: var(--primary-bg-color);
+    color: var(--font-color);
+    font-family: var(--font-family);
+    font-size: 16px;
+    margin: 0;
+    min-height: 100vh;
+}
+
+#heading {
+    color: var(--header-color);
+}
+
+.buttons {
+    display: flex;
+    gap: 20px;
+}
+
+button#start,
+button#close {
+    padding: var(--button-padding);
+    font-family: var(--font-family);
+    font-size: var(--button-font-size);
+    font-weight: var(--button-font-weight);
+    background-color: var(--button-bg-color);
+    color: var(--font-color);
+    text-transform: uppercase;
+    border: none;
+    border-radius: 5px;
+    cursor: pointer;
+    transition: background-color 0.3s ease;
+}
+
+button:disabled {
+    background-color: rgba(255, 255, 255, 0.05);
+    cursor: not-allowed;
+}
+
+#start:hover,
+#close:hover {
+    background-color: rgba(255, 255, 255, 0.2);
+}
+
+#player {
+    background-color: var(--button-bg-color);
+    border: 2px solid var(--font-color);
+    border-radius: 8px;
+}
+
+.port-input {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 5px;
+    width: 100%;
+    max-width: 300px;
+}
+
+.port-input label {
+    font-size: var(--label-font-size);
+    color: var(--font-color);
+    font-weight: bold;
+}
+
+.port-input input {
+    width: 100%;
+    padding: var(--input-padding);
+    font-size: var(--input-font-size);
+    font-family: var(--font-family);
+    background-color: var(--input-bg-color);
+    color: var(--font-color);
+    border: 1px solid var(--input-border-color);
+    border-radius: var(--input-border-radius);
+    transition: border-color 0.3s ease, box-shadow 0.3s ease;
+}
+
+.port-input input:focus {
+    border-color: var(--input-focus-color);
+    box-shadow: 0 0 5px var(--input-focus-color);
+    outline: none;
+}
