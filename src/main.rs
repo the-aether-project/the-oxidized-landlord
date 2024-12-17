@@ -1,6 +1,9 @@
 #[macro_use]
 extern crate rocket;
+use rocket::fairing::{Fairing, Info, Kind};
+use rocket::http::Header;
 use rocket::State;
+use rocket::{Request, Response};
 use std::sync::Arc;
 use webrtc::api::interceptor_registry::register_default_interceptors;
 use webrtc::api::media_engine::{MediaEngine, MIME_TYPE_H264};
@@ -8,41 +11,24 @@ use webrtc::api::{APIBuilder, API};
 use webrtc::ice_transport::ice_connection_state::RTCIceConnectionState;
 use webrtc::ice_transport::ice_server::RTCIceServer;
 use webrtc::interceptor::registry::Registry;
+use webrtc::media::io::h264_reader::H264Reader;
 use webrtc::peer_connection::configuration::RTCConfiguration;
 use webrtc::peer_connection::peer_connection_state::RTCPeerConnectionState;
 use webrtc::peer_connection::sdp::session_description::RTCSessionDescription;
-use webrtc::media::io::h264_reader::H264Reader;
 use webrtc::rtp_transceiver::rtp_codec::RTCRtpCodecCapability;
-use webrtc::track::track_local::TrackLocal;
 use webrtc::track::track_local::track_local_static_sample::TrackLocalStaticSample;
-use rocket::fairing::{Fairing, Info, Kind};
-use rocket::http::Header;
-use rocket::{Request, Response};
-
+use webrtc::track::track_local::TrackLocal;
 
 struct AetherWebRTCConnectionManager {
-    screen_tracks: Arc<tokio::sync::Mutex<Vec<Arc<TrackLocalStaticSample>>>>,
+    screen_tracks: Arc<tokio::sync::RwLock<Vec<Arc<TrackLocalStaticSample>>>>,
     rtc_configuration: RTCConfiguration,
     api: API,
 }
 
 impl AetherWebRTCConnectionManager {
-    fn default() -> Option<Self> {
-        let mut m = MediaEngine::default();
-
-        m.register_default_codecs().ok()?;
-
-        let mut registry = Registry::new();
-
-        registry = register_default_interceptors(registry, &mut m).ok()?;
-
-        let api = APIBuilder::new()
-            .with_media_engine(m)
-            .with_interceptor_registry(registry)
-            .build();
-
-        Some(Self {
-            screen_tracks: Arc::new(tokio::sync::Mutex::new(vec![])),
+    fn new(api: webrtc::api::API) -> Self {
+        Self {
+            screen_tracks: Arc::new(tokio::sync::RwLock::new(vec![])),
             rtc_configuration: RTCConfiguration {
                 ice_servers: vec![RTCIceServer {
                     urls: vec!["stun:stun.l.google.com:19302".to_owned()],
@@ -51,7 +37,7 @@ impl AetherWebRTCConnectionManager {
                 ..Default::default()
             },
             api: api,
-        })
+        }
     }
 
     async fn connect(
@@ -59,19 +45,19 @@ impl AetherWebRTCConnectionManager {
         offer: RTCSessionDescription,
     ) -> anyhow::Result<RTCSessionDescription> {
         let screen_track = Arc::new(TrackLocalStaticSample::new(
-                RTCRtpCodecCapability {
-                    mime_type: MIME_TYPE_H264.to_owned(),
-                    ..Default::default()
-                },
-                "video".to_owned(),
-                "aether-rtc-screen".to_owned(),
-            ));
+            RTCRtpCodecCapability {
+                mime_type: MIME_TYPE_H264.to_owned(),
+                ..Default::default()
+            },
+            "video".to_owned(),
+            "aether-rtc-screen".to_owned(),
+        ));
 
-            
-        self.screen_tracks.lock().await.push(Arc::clone(&screen_track));
-        let track_index = self.screen_tracks.lock().await.len() - 1;
-        
-
+        self.screen_tracks
+            .write()
+            .await
+            .push(Arc::clone(&screen_track));
+        let track_index = self.screen_tracks.read().await.len() - 1;
 
         let peer = Arc::new(
             self.api
@@ -91,7 +77,6 @@ impl AetherWebRTCConnectionManager {
 
         let (done_tx, mut done_rx) = tokio::sync::mpsc::channel::<()>(1);
         let done_tx1 = done_tx.clone();
-
 
         let notify = Arc::new(tokio::sync::Notify::new());
         let notify2 = Arc::clone(&notify);
@@ -131,8 +116,6 @@ impl AetherWebRTCConnectionManager {
 
         peer.set_remote_description(offer).await?;
 
-
-
         let answer = peer.create_answer(None).await?;
         let mut gather_complete = peer.gathering_complete_promise().await;
 
@@ -144,12 +127,11 @@ impl AetherWebRTCConnectionManager {
         let screen_tracks = Arc::clone(&self.screen_tracks);
         let screen_tracks_2 = Arc::clone(&self.screen_tracks);
 
-        if self.screen_tracks.lock().await.len() == 1 {
+        if self.screen_tracks.read().await.len() == 1 {
             tokio::spawn(async move {
                 notify2.notified().await;
 
-                tokio::spawn(async move {
-                    let ffmpeg_process = std::process::Command::new("ffmpeg")
+                let mut ffmpeg_process = std::process::Command::new("ffmpeg")
                     .args(vec![
                         "-re",
                         "-device",
@@ -170,50 +152,50 @@ impl AetherWebRTCConnectionManager {
                         "1M",
                         "-f",
                         "h264",
-                        "-"
+                        "-",
                     ])
                     .stdout(std::process::Stdio::piped())
                     .stderr(std::process::Stdio::null())
                     .spawn()
                     .unwrap();
 
-                    let stdout = ffmpeg_process.stdout.unwrap();
-                    let mut h264_source = H264Reader::new(stdout, 1_048_576);
+                let stdout = ffmpeg_process.stdout.take().unwrap();
+                let mut h264_source = H264Reader::new(stdout, 1_048_576);
 
-                    let mut ticker = tokio::time::interval(std::time::Duration::from_millis(33));
+                let mut ticker = tokio::time::interval(std::time::Duration::from_millis(33));
 
-                    while let Ok(nal) = h264_source.next_nal() {
-                        let sample = webrtc::media::Sample {
-                            data: nal.data.freeze(),
-                            duration: std::time::Duration::from_secs(1),
-                            ..Default::default()
-                        };
-                        
-                        for track in screen_tracks.lock().await.iter() {
-                            if track.write_sample(&sample).await.is_err() {
-                                break
-                            }
+                'outer: while let Ok(nal) = h264_source.next_nal() {
+                    let sample = webrtc::media::Sample {
+                        data: nal.data.freeze(),
+                        duration: std::time::Duration::from_secs(1),
+                        ..Default::default()
+                    };
+
+                    for track in screen_tracks.read().await.iter() {
+                        if track.write_sample(&sample).await.is_err() {
+                            break 'outer;
                         }
-
-                        let _ = ticker.tick().await;
-
-                        if screen_tracks.lock().await.is_empty() {
-                            break;
-                        }
-
                     }
-                });
 
-                
+                    let _ = ticker.tick().await;
+
+                    if screen_tracks.read().await.is_empty() {
+                        break;
+                    }
+                }
+
+                let _ = ffmpeg_process.kill();
             });
         }
 
-        tokio::spawn(async move {tokio::select! {
-            _ = done_rx.recv() => {
-                let _ = peer.close().await;
-                screen_tracks_2.lock().await.remove(track_index);
-            }
-        };});
+        tokio::spawn(async move {
+            tokio::select! {
+                _ = done_rx.recv() => {
+                    let _ = peer.close().await;
+                    screen_tracks_2.write().await.remove(track_index);
+                }
+            };
+        });
 
         anyhow::Ok(answer)
     }
@@ -262,10 +244,24 @@ fn all_options() {}
 #[launch]
 fn rocket() -> _ {
     let app = rocket::build();
+    let mut m = MediaEngine::default();
 
-    app.manage(tokio::sync::Mutex::new(
-        AetherWebRTCConnectionManager::default().unwrap(),
-    ))
+    m.register_default_codecs()
+        .expect("Unable to register default codecs.");
+
+    let mut registry = Registry::new();
+
+    registry = register_default_interceptors(registry, &mut m)
+        .expect("Unable to register default interceptors.");
+
+    let api = APIBuilder::new()
+        .with_media_engine(m)
+        .with_interceptor_registry(registry)
+        .build();
+
+    app.manage(tokio::sync::Mutex::new(AetherWebRTCConnectionManager::new(
+        api,
+    )))
     .mount("/", routes![sdp_endpoint, all_options])
     .attach(CORS)
 }
