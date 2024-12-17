@@ -6,18 +6,68 @@ use rocket::State;
 use rocket::{Request, Response};
 use std::sync::Arc;
 use webrtc::api::interceptor_registry::register_default_interceptors;
-use webrtc::api::media_engine::{MediaEngine, MIME_TYPE_H264};
+use webrtc::api::media_engine::{MediaEngine, MIME_TYPE_VP8};
 use webrtc::api::{APIBuilder, API};
 use webrtc::ice_transport::ice_connection_state::RTCIceConnectionState;
 use webrtc::ice_transport::ice_server::RTCIceServer;
 use webrtc::interceptor::registry::Registry;
-use webrtc::media::io::h264_reader::H264Reader;
+use webrtc::media::io::ivf_reader::IVFReader;
 use webrtc::peer_connection::configuration::RTCConfiguration;
 use webrtc::peer_connection::peer_connection_state::RTCPeerConnectionState;
 use webrtc::peer_connection::sdp::session_description::RTCSessionDescription;
 use webrtc::rtp_transceiver::rtp_codec::RTCRtpCodecCapability;
 use webrtc::track::track_local::track_local_static_sample::TrackLocalStaticSample;
 use webrtc::track::track_local::TrackLocal;
+
+#[cfg(target_os = "win32")]
+fn get_ffmpeg_command() -> Vec<String> {
+    vec![
+        "-re".to_owned(),
+        "-f".to_owned(),
+        "gdigrab".to_owned(),
+        "-i".to_owned(),
+        "desktop".to_owned(),
+        "-vf".to_owned(),
+        "scale=1280:720".to_owned(),
+        "-c:v".to_owned(),
+        "vp8".to_owned(),
+        "-pix_fmt".to_owned(),
+        "yuv420p".to_owned(),
+        "-r".to_owned(),
+        "24".to_owned(),
+        "-b:v".to_owned(),
+        "2M".to_owned(),
+        "-f".to_owned(),
+        "ivf".to_owned(),
+        "-".to_owned(),
+    ]
+}
+
+#[cfg(target_os = "linux")]
+fn get_ffmpeg_command() -> Vec<String> {
+    let display = option_env!("DISPLAY").unwrap_or(":0");
+
+    vec![
+        "-re".to_owned(),
+        "-f".to_owned(),
+        "x11grab".to_owned(),
+        "-i".to_owned(),
+        format!("{display}.0"),
+        "-vf".to_owned(),
+        "scale=1280:720".to_owned(),
+        "-c:v".to_owned(),
+        "vp8".to_owned(),
+        "-pix_fmt".to_owned(),
+        "yuv420p".to_owned(),
+        "-r".to_owned(),
+        "24".to_owned(),
+        "-b:v".to_owned(),
+        "2M".to_owned(),
+        "-f".to_owned(),
+        "ivf".to_owned(),
+        "-".to_owned(),
+    ]
+}
 
 struct AetherWebRTCConnectionManager {
     screen_tracks: Arc<tokio::sync::RwLock<Vec<Arc<TrackLocalStaticSample>>>>,
@@ -46,7 +96,7 @@ impl AetherWebRTCConnectionManager {
     ) -> anyhow::Result<RTCSessionDescription> {
         let screen_track = Arc::new(TrackLocalStaticSample::new(
             RTCRtpCodecCapability {
-                mime_type: MIME_TYPE_H264.to_owned(),
+                mime_type: MIME_TYPE_VP8.to_owned(),
                 ..Default::default()
             },
             "video".to_owned(),
@@ -132,41 +182,22 @@ impl AetherWebRTCConnectionManager {
                 notify2.notified().await;
 
                 let mut ffmpeg_process = std::process::Command::new("ffmpeg")
-                    .args(vec![
-                        "-re",
-                        "-device",
-                        "/dev/dri/card1",
-                        "-f",
-                        "kmsgrab",
-                        "-i",
-                        "-",
-                        "-vf",
-                        "hwmap=derive_device=vaapi,scale_vaapi=w=1280:h=720:format=nv12",
-                        "-c:v",
-                        "h264_vaapi",
-                        "-bsf:v",
-                        "h264_mp4toannexb",
-                        "-r",
-                        "24",
-                        "-b:v",
-                        "1M",
-                        "-f",
-                        "h264",
-                        "-",
-                    ])
+                    .args(get_ffmpeg_command())
                     .stdout(std::process::Stdio::piped())
                     .stderr(std::process::Stdio::null())
                     .spawn()
                     .unwrap();
 
                 let stdout = ffmpeg_process.stdout.take().unwrap();
-                let mut h264_source = H264Reader::new(stdout, 1_048_576);
+                let (mut ivf_source, header) = IVFReader::new(stdout).unwrap();
 
-                let mut ticker = tokio::time::interval(std::time::Duration::from_millis(33));
+                let mut ticker = tokio::time::interval(std::time::Duration::from_millis(
+                    ((1000 * header.timebase_numerator) / header.timebase_denominator) as u64,
+                ));
 
-                'outer: while let Ok(nal) = h264_source.next_nal() {
+                'outer: while let Ok((frame, _)) = ivf_source.parse_next_frame() {
                     let sample = webrtc::media::Sample {
-                        data: nal.data.freeze(),
+                        data: frame.freeze(),
                         duration: std::time::Duration::from_secs(1),
                         ..Default::default()
                     };
