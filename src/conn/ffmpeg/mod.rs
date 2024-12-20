@@ -29,7 +29,7 @@ pub(crate) fn get_ffmpeg_command() -> Vec<String> {
 
 #[cfg(target_os = "linux")]
 pub(crate) fn get_ffmpeg_command() -> Vec<String> {
-    let display = option_env!("DISPLAY").unwrap_or(":0");
+    let display = std::env::var("DISPLAY").unwrap_or(String::from(":0"));
 
     [
         "-re",
