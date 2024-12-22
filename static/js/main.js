@@ -54,6 +54,38 @@ function openConnection() {
     pc.addTransceiver('video', { direction: 'recvonly' });
     pc.addTransceiver('audio', { direction: 'recvonly' });
 
+    var dataChannel = pc.createDataChannel("mouse_events");
+    var signalledClosure = pc.createDataChannel("signalled_closure");
+
+    const clickHandler = (event) => {
+
+        const rect = videoPlayer.getBoundingClientRect();
+        const x_ratio = (event.clientX - rect.left) / rect.width;
+        const y_ratio = (event.clientY - rect.top) / rect.height;
+
+        const click_payload = { x_ratio, y_ratio };
+
+        dataChannel.send(
+            JSON.stringify({
+                type: "mouse",
+                payload: { "clicked_at": click_payload },
+            })
+        );
+    }
+
+    dataChannel.onopen = () => {
+        videoPlayer.addEventListener("click", clickHandler);
+    }
+    dataChannel.onclose = () => {
+        videoPlayer.removeEventListener("click", clickHandler);
+    }
+
+    closeButton.addEventListener("click", () => {
+        signalledClosure.send(JSON.stringify({
+            type: "closure",
+        }));
+    });
+
     pc.addEventListener('track', (evt) => {
         if (evt.track.kind == 'video') {
             videoPlayer.srcObject = evt.streams[0];

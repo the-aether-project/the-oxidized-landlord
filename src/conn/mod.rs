@@ -5,6 +5,8 @@ use std::sync::{atomic::AtomicBool, Arc};
 use tokio::sync::RwLock;
 use webrtc::api::media_engine::MIME_TYPE_H264;
 use webrtc::api::API;
+use webrtc::data_channel::data_channel_message::DataChannelMessage;
+use webrtc::data_channel::RTCDataChannel;
 use webrtc::ice_transport::ice_connection_state::RTCIceConnectionState;
 use webrtc::ice_transport::ice_server::RTCIceServer;
 use webrtc::peer_connection::configuration::RTCConfiguration;
@@ -162,6 +164,8 @@ impl AetherWebRTCConnectionManager {
             re_ntfy = self.set_screen_source(Some(ntfy), codec).await
         }
 
+        let datachannel_nfty = re_ntfy.clone();
+
         let screen_track = self
             .screen_track
             .read()
@@ -208,6 +212,65 @@ impl AetherWebRTCConnectionManager {
                 Box::pin(async {})
             },
         ));
+
+        peer.on_data_channel(Box::new(move |datachannel: Arc<RTCDataChannel>| {
+            let mouse = mouse_rs::Mouse::new();
+            // TODO
+            // Fetch this through APIs.
+            let (window_width, window_height) = (1920usize, 1080usize);
+
+            let nfty = datachannel_nfty.clone();
+
+            Box::pin(async move {
+                datachannel.on_close(Box::new(move || Box::pin(async {})));
+                datachannel.on_open(Box::new(move || Box::pin(async {})));
+
+                let channel = datachannel.clone();
+
+                datachannel.on_message(Box::new(move |msg: DataChannelMessage| {
+                    match channel.label() {
+                        "mouse_events" => {
+                            if let Ok(message) =
+                                serde_json::from_slice::<serde_json::Value>(&msg.data.to_vec())
+                            {
+                                let clicked_at = &message["payload"]["clicked_at"];
+
+                                if let (Some(x), Some(y)) = (
+                                    clicked_at["x_ratio"].as_f64(),
+                                    clicked_at["y_ratio"].as_f64(),
+                                ) {
+                                    let previous_pos = mouse
+                                        .get_position()
+                                        .unwrap_or(mouse_rs::types::Point { x: 0, y: 0 });
+
+                                    let _ = mouse.move_to(
+                                        (window_width as f64 * x) as i32,
+                                        (window_height as f64 * y) as i32,
+                                    );
+                                    let _ = mouse.click(&mouse_rs::types::keys::Keys::LEFT);
+                                    let _ = mouse.move_to(previous_pos.x, previous_pos.y);
+                                } else {
+                                    error!("Unable to resolve click position from: {:?}", message);
+                                }
+                            } else {
+                                error!(
+                                    "Unexpected value in the mouse events data channel: {:?}",
+                                    msg
+                                );
+                            }
+                        }
+                        "signalled_closure" => {
+                            if let Some(ntfy) = &nfty {
+                                ntfy.notify_one();
+                            }
+                        }
+                        &_ => {}
+                    }
+
+                    Box::pin(async {})
+                }));
+            })
+        }));
 
         peer.set_remote_description(offer).await?;
 
