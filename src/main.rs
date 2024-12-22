@@ -1,7 +1,7 @@
 #[macro_use]
 extern crate rocket;
-
 mod conn;
+
 use rocket::fairing::{Fairing, Info, Kind};
 use rocket::http::Header;
 use rocket::serde::json::Json;

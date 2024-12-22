@@ -135,6 +135,7 @@ impl AetherWebRTCConnectionManager {
                 .expect("Unable to access stdout, is it piped properly?");
 
             info!("Creating '{codec}' source for screen tracks.");
+
             if codec == MIME_TYPE_H264 {
                 utils::h264_player_from(screen_track, connection_state, reader).await;
             } else {
