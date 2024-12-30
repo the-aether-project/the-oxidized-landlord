@@ -6,10 +6,8 @@ use rocket::fairing::{Fairing, Info, Kind};
 use rocket::fs::FileServer;
 use rocket::http::Header;
 use rocket::serde::json::Json;
-use rocket::State;
 use rocket::{Request, Response};
 use rocket_dyn_templates::{context, Template};
-use tokio::sync::Mutex;
 
 pub struct CORS;
 
@@ -41,9 +39,7 @@ async fn server_negotiation_request(mut token: Json<serde_json::Value>) {
 }
 
 #[get("/")]
-async fn default_landing_page(
-    _manager: &State<Mutex<conn::AetherWebRTCConnectionManager>>,
-) -> Template {
+async fn default_landing_page() -> Template {
     let conf = rocket::Config::figment().extract::<rocket::Config>();
 
     Template::render(
