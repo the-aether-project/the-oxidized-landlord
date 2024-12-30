@@ -66,8 +66,6 @@ button:disabled {
 
 #player {
     background-color: var(--button-bg-color);
-    border: 2px solid var(--font-color);
-    border-radius: 8px;
 }
 
 .port-input {

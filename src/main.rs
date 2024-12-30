@@ -3,16 +3,13 @@ extern crate rocket;
 mod conn;
 
 use rocket::fairing::{Fairing, Info, Kind};
+use rocket::fs::FileServer;
 use rocket::http::Header;
 use rocket::serde::json::Json;
 use rocket::State;
 use rocket::{Request, Response};
+use rocket_dyn_templates::{context, Template};
 use tokio::sync::Mutex;
-use webrtc::api::interceptor_registry::register_default_interceptors;
-use webrtc::api::media_engine::MediaEngine;
-use webrtc::api::APIBuilder;
-use webrtc::interceptor::registry::Registry;
-use webrtc::peer_connection::sdp::session_description::RTCSessionDescription;
 
 pub struct CORS;
 
@@ -36,18 +33,24 @@ impl Fairing for CORS {
     }
 }
 
-#[post("/sdp", format = "json", data = "<session_description>")]
-async fn sdp_endpoint(
-    manager: &State<Mutex<conn::AetherWebRTCConnectionManager>>,
-    session_description: Json<RTCSessionDescription>,
-) -> Json<RTCSessionDescription> {
-    Json::from(
-        manager
-            .lock()
-            .await
-            .connect(session_description.into_inner())
-            .await
-            .unwrap(),
+#[post("/negotiate-server", format = "json", data = "<token>")]
+async fn server_negotiation_request(mut token: Json<serde_json::Value>) {
+    let token = token.take().as_str().unwrap().to_owned();
+    // Change this or fetch it dynamically.
+    tokio::spawn(conn::ws::start_server_connection("127.0.0.1:7878", token));
+}
+
+#[get("/")]
+async fn default_landing_page(
+    _manager: &State<Mutex<conn::AetherWebRTCConnectionManager>>,
+) -> Template {
+    let conf = rocket::Config::figment().extract::<rocket::Config>();
+
+    Template::render(
+        "sample",
+        context! {
+            local_port: conf.map(|conf| conf.port).unwrap_or(8000u16)
+        },
     )
 }
 
@@ -57,22 +60,16 @@ fn all_options() {}
 #[launch]
 fn rocket() -> _ {
     let app = rocket::build();
-    let mut m = MediaEngine::default();
 
-    m.register_default_codecs()
-        .expect("Unable to register default codecs.");
-
-    let mut registry = Registry::new();
-
-    registry = register_default_interceptors(registry, &mut m)
-        .expect("Unable to register default interceptors.");
-
-    let api = APIBuilder::new()
-        .with_media_engine(m)
-        .with_interceptor_registry(registry)
-        .build();
-
-    app.manage(Mutex::new(conn::AetherWebRTCConnectionManager::new(api)))
-        .mount("/", routes![sdp_endpoint, all_options])
-        .attach(CORS)
+    app.mount(
+        "/",
+        routes![
+            default_landing_page,
+            all_options,
+            server_negotiation_request
+        ],
+    )
+    .mount("/static", FileServer::from("./static"))
+    .attach(CORS)
+    .attach(Template::fairing())
 }

@@ -14,16 +14,16 @@
 
 <body>
     <h1 id="heading">Aether: Blazingly Fast Remote Control Demonstration</h1>
-    <video id="player" playsinline controls="false"></video>
+    <video id="player" playsinline></video>
     <div class="buttons">
         <button id="start">Start connection</button>
         <button id="close">Close connection</button>
     </div>
     <div class="port-input">
         <label for="local-port">Local Service Worker Port:</label>
-        <input type="text" id="local-port" name="local-port" placeholder="8000">
+        <input type="text" id="local-port" name="local-port" placeholder="{{ local_port }}">
     </div>
-    <audio class="http-live-audio" controls="false" hidden="true"></audio>
+    <audio id="player" controls="false" hidden="true"></audio>
 
 </body>
 
